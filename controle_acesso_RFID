@@ -1,0 +1,264 @@
+/*
+  Ligação >> https://drive.google.com/file/d/19wqmTSO5QOPo1GeH4H04wX046m8fXNhn/view?usp=sharing
+*/
+
+#include "ESP32_MailClient.h"
+
+// REPLACE WITH YOUR NETWORK CREDENTIALS
+const char* ssid = "Wifi Unigranrio";
+const char* password = "SUA_SENHA_WIFI";
+
+// To send Email using Gmail use port 465 (SSL) and SMTP Server smtp.gmail.com
+// Para permitir o login no Google pelo ESP32 deve permitir no link https://myaccount.google.com/lesssecureapps?pli=1
+#define emailSenderAccount    "EMAIL-ESCOLA" 
+#define emailSenderPassword   "SENHA-EMAIL"
+String emailRecipient = "";
+String emailSubject = ""; // não existia
+#define smtpServer            "smtp.gmail.com"
+#define smtpServerPort        465
+//#define emailSubject        "TURMA 2021/1 Controle de acesso Escola Feliz" 
+
+// The Email Sending data object contains config and data to send
+SMTPData smtpData;
+
+// Callback function to get the Email sending status
+void sendCallback(SendStatus info);
+
+//==========================================
+//inclusão de algumas bibliotecas
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Wire.h>
+
+// Definiremos o id que será liberado o acesso
+String ID[] = {"8B 62 9B 1B", "26 B8 73 F7", "2B DD FE 21", "7B CC 06 22", "7B 0A 07 22"}; // , "26 B8 73 F7" IDs das tags, para adicionar mais basta separar por vírgula 
+ 
+//define alguns pinos do esp32 que serao conectados aos modulos e componentes
+#define LedVerde 2
+#define LedVermelho 12
+#define SS_PIN 21
+#define RST_PIN 22
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);   // define os pinos de controle do modulo de leitura de cartoes RFID
+
+const int porta_rele1 = 4;
+
+//controle do buzzer
+int freq = 4505;
+int channel = 0;
+int resolution = 8;
+int buzzer = 15;
+
+void setup(){
+  
+  Serial.begin(115200);
+  Serial.println();
+  
+  Serial.print("Conectando");
+
+  // define alguns pinos como saida
+  pinMode(LedVerde, OUTPUT);
+  pinMode(LedVermelho, OUTPUT);
+  pinMode(buzzer, OUTPUT);
+  pinMode(porta_rele1, OUTPUT); 
+
+  //controle buzzer 
+  ledcSetup(channel, freq, resolution);
+  ledcAttachPin(buzzer, channel);
+
+  WiFi.begin(ssid); // manter assim se o wifi possuir senha WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(200);
+    digitalWrite(LedVerde, HIGH); // enquanto o wifi não estiver conectado o led azul do ESP32 fica piscando
+    delay(800);
+    digitalWrite(LedVerde, LOW);
+  }
+
+  Serial.println();
+  Serial.println("WiFi conectado.");
+  Serial.println();
+  //Serial.println("Preparando para enviar email");
+  Serial.println();
+
+//====================================================================
+  SPI.begin();   // inicia a comunicacao SPI que sera usada para comunicacao com o mudulo RFID
+  mfrc522.PCD_Init();  //inicia o modulo RFID
+ 
+  Serial.println("Aguardando leitura do RFID...");
+   
+}
+void loop() {
+ //enviar_para_nuvem(); ////
+ // inicia o buzzer desligado 
+ //ledcWriteTone(channel, LOW);
+//============================================
+if ( ! mfrc522.PICC_IsNewCardPresent()) {
+     return;                 // se nao tiver um cartao para ser lido recomeça o void loop
+  }
+  if ( ! mfrc522.PICC_ReadCardSerial()) {
+    return;                  //se nao conseguir ler o cartao recomeça o void loop tambem
+  }
+ 
+  String conteudo = "";      // cria uma string
+ 
+  Serial.println("id da tag :"); //imprime na serial o id do cartao
+ 
+  for (byte i = 0; i < mfrc522.uid.size; i++){       // faz uma verificacao dos bits da memoria do cartao
+     //ambos comandos abaixo vão concatenar as informacoes do cartao...
+     //porem os 2 primeiros irao mostrar na serial e os 2 ultimos guardarao os valores na string de conteudo para fazer as verificacoes
+     Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
+     Serial.print(mfrc522.uid.uidByte[i], HEX);
+     conteudo.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "));
+     conteudo.concat(String(mfrc522.uid.uidByte[i], HEX));
+  }
+  Serial.println();
+  conteudo.toUpperCase();                      // deixa as letras da string todas maiusculas
+ 
+  if (conteudo.substring(1) == ID[0] || conteudo.substring(1) == ID[3]){         // verifica se o ID do cartao lido tem o mesmo ID do cartao que queremos liberar o acesso
+      digitalWrite(LedVerde, HIGH);            // ligamos o led verde      
+      String nome = "Jose Luiz Marques";       //nome que será exibido referente a tag cadastrada
+      Serial.print("Acesso Liberado para ");   // informamos no monitor serial que o acesso está liberado    
+      Serial.println(nome); 
+      emailRecipient = "jose.fires@unigranrio.com.br"; //email vinculado ao ID do cartão lido
+      emailSubject   = "TURMA 2021/2 Controle de acesso Escola Feliz"; // não existia
+            
+      sendEmail(nome); // chama a função que envia email passando o nome como parâmetro
+      digitalWrite(porta_rele1, LOW);  //Liga rele 1
+      
+      //enviar_para_nuvem(nome);////
+     
+      aguarda(); //chama a função para aguardar a próxima leitura
+        
+      digitalWrite(LedVerde, LOW);             // e desliga o led
+       
+  } else if(conteudo.substring(1) == ID[1]){ // verifica se o ID do cartao lido tem o mesmo ID do cartao que queremos liberar o acesso
+  
+      digitalWrite(LedVerde, HIGH);            // ligamos o led verde      
+      String nome = "Matheus Acacio"; //nome que será exibido referente a tag cadastrada
+      Serial.print("Acesso Liberado para ");    // informamos no monitor serial que o acesso está liberado
+      Serial.println(nome);       
+      emailRecipient = "matheusacacio@unigranrio.br";
+      emailSubject   = "TURMA 2021/1 Controle de acesso Escola Feliz";
+      sendEmail(nome); //chama a função que envia email passando o nome como parâmetro  
+         
+      digitalWrite(porta_rele1, LOW);  //Liga rele 1
+      aguarda(); //chama a função para aguardar a próxima leitura
+      digitalWrite(LedVerde, LOW);             // e desliga o led
+    
+  } else if(conteudo.substring(1) == ID[2]){ // verifica se o ID do cartao lido tem o mesmo ID do cartao que queremos liberar o acesso
+  
+      digitalWrite(LedVerde, HIGH);            // ligamos o led verde      
+      String nome = "Hiago Henriques"; //nome que será exibido referente a tag cadastrada
+      Serial.print("Acesso Liberado para ");    // informamos no monitor serial que o acesso está liberado
+      Serial.println(nome); 
+      emailRecipient = "hiagomiller@unigranrio.br";
+      emailSubject   = "TURMA 2021/1 Controle de acesso Escola Feliz";
+      sendEmail(nome); //chama a função que envia email passando o nome como parâmetro
+           
+      digitalWrite(porta_rele1, LOW);  //Liga rele 1
+      aguarda(); //chama a função para aguardar a próxima leitura
+      digitalWrite(LedVerde, LOW);             // e desliga o led
+    
+  } else if(conteudo.substring(1) == ID[4]){ // verifica se o ID do cartao lido tem o mesmo ID do cartao que queremos liberar o acesso
+  
+      digitalWrite(LedVerde, HIGH);            // ligamos o led verde      
+      String nome = "Juliane Alves"; //nome que será exibido referente a tag cadastrada
+      Serial.print("Acesso Liberado para ");    // informamos no monitor serial que o acesso está liberado
+      Serial.println(nome); 
+      emailRecipient = "julianepereira@unigranrio.br";
+      emailSubject   = "TURMA 2021/1  Controle de acesso Escola Feliz";
+      sendEmail(nome); //chama a função que envia email passando o nome como parâmetro
+           
+      digitalWrite(porta_rele1, LOW);  //Liga rele 1
+      aguarda(); //chama a função para aguardar a próxima leitura
+      digitalWrite(LedVerde, LOW);             // e desliga o led
+    
+  } else {                                       // caso o cartao lido nao foi registrado
+    digitalWrite(porta_rele1, HIGH);  //Desliga rele 1
+    digitalWrite(LedVermelho, HIGH); 
+    // liga o led vermelho
+    // infoma ao usuario que ele nao tem acesso
+    Serial.println("Acesso negado");  
+
+    ativaBuzzer();
+     
+    aguarda(); //chama a função para aguardar a próxima leitura
+    digitalWrite(LedVermelho, LOW);         // desliga o led vermelho       
+  }
+
+} //fim loop
+
+void sendEmail(String nome){
+  // Set the SMTP Server Email host, port, account and password
+  smtpData.setLogin(smtpServer, smtpServerPort, emailSenderAccount, emailSenderPassword);
+
+  // For library version 1.2.0 and later which STARTTLS protocol was supported,the STARTTLS will be 
+  // enabled automatically when port 587 was used, or enable it manually using setSTARTTLS function.
+  //smtpData.setSTARTTLS(true);
+
+  // Set the sender name and Email
+  smtpData.setSender("ESP32", emailSenderAccount);
+
+  // Set Email priority or importance High, Normal, Low or 1 to 5 (1 is highest)
+  smtpData.setPriority("High");
+
+  // Set the subject
+  smtpData.setSubject(emailSubject);
+
+  // Set the message with HTML format
+  smtpData.setMessage("<div style=\"color:#2f4468;\"><h1>Controle de acesso</h1><p>- Olá, " + nome + " acessou a escola</p></div>", true);
+
+  // Add recipients, you can add more than one recipient
+  smtpData.addRecipient(emailRecipient);
+  //smtpData.addRecipient("YOUR_RECIPIENT_EMAIL_ADDRESS@example.com");
+
+  // Add attach files from SD card or SPIFFS
+  // Comment the next two lines, if no SPIFFS files created or SD card connected
+
+  smtpData.setSendCallback(sendCallback);
+
+  //Start sending Email, can be set callback function to track the status
+  if (!MailClient.sendMail(smtpData))
+    Serial.println("Erro enviando Email, " + MailClient.smtpErrorReason());
+
+  //Clear all data from Email object to free memory
+  smtpData.empty();
+}
+
+// Callback function to get the Email sending status
+void sendCallback(SendStatus msg) {
+  // Print the current status
+  Serial.println(msg.info());
+
+  // Do something when complete
+  if (msg.success()) {
+    Serial.println("----------------");
+  }
+}
+
+void aguarda(){
+  for(byte s = 4; s > 0; s--){             //vai informando ao usuario quantos segundos faltao para a tranca ser fechada
+    Serial.print("Aguarde ");
+    Serial.print(s);                          // informa quantos segundos faltam para pode fazer uma nova leitura
+    Serial.println(" segundos para nova leitura");
+    delay(500);
+  }
+
+  Serial.println("==================================================");
+  Serial.println("Aguardando nova leitura do RFID...");
+}
+
+
+void ativaBuzzer(){
+  
+  //ativa o buzzer
+    ledcWriteTone(channel, 4505); //2000
+    delay(1000);
+    ledcWriteTone(channel, LOW);// não existia
+   /* delay(500);
+    ledcWriteTone(channel, 4505); //2000
+    delay(500);
+    ledcWriteTone(channel, LOW);// não existia
+    */
+} 
